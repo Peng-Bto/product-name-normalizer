@@ -10,6 +10,7 @@ __pycache__/
 # 项目产出及日志
 process.log
 result.xlsx
+failed_products.txt
 
 # 数据文件 (通常建议不上传原始数据)
 product.xlsx

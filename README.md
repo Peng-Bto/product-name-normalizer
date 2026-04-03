@@ -1,13 +1,14 @@
 # 品名自动分类工具 (Product Name Normalizer)
 
-基于科大讯飞星火大模型（OpenAI 兼容接口）实现的自动化海关品名分类工具。支持高并发处理、自动去重、智能解析及完善的日志记录。
+基于科大讯飞星火大模型（OpenAI 兼容接口）实现的自动化海关品名分类工具。支持高并发处理、自动去重、断点续传及完善的日志记录。
 
 ## 🚀 功能特性
 
 - **高并发处理**：默认开启 7 路异步并发，显著提升大批量品名的解析效率。
+- **断点续传**：解析失败的品名会自动保存到 `failed_products.txt`，重启程序将优先处理上次未成功的任务。
+- **自动重试机制**：程序会自动循环重试失败品名，并在轮次间加入 1 秒延迟，直至所有品名解析成功。
 - **数据预处理**：自动读取 Excel 第一列品名，剔除重复项及首尾空格，节省 Token。
 - **智能解析**：强制启用 `json_object` 模式，确保模型返回稳定的 JSON 结构。
-- **鲁棒性强**：内置 3 次失败重试机制，针对网络波动或接口限制有良好的容错性。
 - **全流程日志**：集成 `loguru`，实时记录处理进度、错误详情及 API 交互。
 - **环境管理**：使用 `uv` 进行现代化的 Python 依赖和环境管理。
 
@@ -35,7 +36,7 @@
    # 注意：API_KEY 格式为 APIKey:APISecret
    SPARK_API_KEY=您的APIKey:您的APISecret
    SPARK_BASE_URL=https://maas-api.cn-huabei-1.xf-yun.com/v2
-   SPARK_MODEL_DOMAIN=xopdeepseekv32
+   SPARK_MODEL_DOMAIN=generalv3.5
    ```
 
 3. **准备数据**:
@@ -53,6 +54,7 @@ uv run main.py
 
 - `main.py`: 核心异步并发处理逻辑。
 - `prompt.txt`: 包含海关品名分类标准的系统提示词。
+- `failed_products.txt`: 自动生成的失败/待处理品名清单（支持断点续传）。
 - `product.xlsx`: 输入数据文件（需自备）。
 - `result.xlsx`: 自动生成的分类结果文件。
 - `process.log`: 运行过程中的详细日志。

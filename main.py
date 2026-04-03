@@ -19,7 +19,7 @@ SPARK_API_KEY = os.getenv("SPARK_API_KEY")
 SPARK_BASE_URL = os.getenv("SPARK_BASE_URL", "https://maas-api.cn-huabei-1.xf-yun.com/v2")
 SPARK_MODEL_DOMAIN = os.getenv("SPARK_MODEL_DOMAIN", "generalv3.5") 
 
-CONCURRENCY_LIMIT = 5
+CONCURRENCY_LIMIT = 7
 RETRY_COUNT = 3
 
 # 初始化客户端
@@ -95,46 +95,84 @@ async def main():
         logger.error("请在 .env 文件中配置 SPARK_API_KEY (格式为 APIKey:APISecret)")
         return
 
-    # 1. 读取数据
     input_file = "product.xlsx"
     output_file = "result.xlsx"
+    failed_file = "failed_products.txt"
     
-    if not os.path.exists(input_file):
-        logger.error(f"找不到输入文件 {input_file}")
-        return
-
-    try:
-        df = pd.read_excel(input_file)
-        # 假设第一列是品名
-        original_col_name = df.columns[0]
-        # 去重、去空格
-        products = df[original_col_name].dropna().astype(str).str.strip().unique().tolist()
-        logger.info(f"读取到 {len(products)} 个唯一品名。")
-    except Exception as e:
-        logger.error(f"读取 Excel 失败: {e}")
-        return
-
-    # 2. 并发处理
-    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-    tasks = [get_classification(name, semaphore) for name in products]
+    all_results = []
     
-    results = []
-    # 使用 tqdm 显示进度
-    for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="正在分类品名"):
-        result = await coro
-        results.append(result)
+    # 1. 初始读取数据
+    if os.path.exists(failed_file):
+        try:
+            with open(failed_file, "r", encoding="utf-8") as f:
+                products_to_process = [line.strip() for line in f if line.strip()]
+            logger.info(f"从 {failed_file} 读取到 {len(products_to_process)} 个失败品名，准备重试。")
+        except Exception as e:
+            logger.error(f"读取 {failed_file} 失败: {e}")
+            return
+    else:
+        if not os.path.exists(input_file):
+            logger.error(f"找不到输入文件 {input_file}")
+            return
+        try:
+            df = pd.read_excel(input_file)
+            original_col_name = df.columns[0]
+            products_to_process = df[original_col_name].dropna().astype(str).str.strip().unique().tolist()
+            logger.info(f"从 {input_file} 读取到 {len(products_to_process)} 个唯一品名。")
+        except Exception as e:
+            logger.error(f"读取 Excel 失败: {e}")
+            return
+
+    iteration = 1
+    while products_to_process:
+        logger.info(f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}")
+        
+        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+        tasks = [get_classification(name, semaphore) for name in products_to_process]
+        
+        current_round_results = []
+        for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=f"第 {iteration} 轮分类进度"):
+            result = await coro
+            current_round_results.append(result)
+
+        # 筛选成功和失败
+        success_results = [r for r in current_round_results if r.get("品类") != "处理失败"]
+        failed_results = [r for r in current_round_results if r.get("品类") == "处理失败"]
+        
+        all_results.extend(success_results)
+        
+        if failed_results:
+            products_to_process = [r["被解析品名"] for r in failed_results]
+            # 记录失败品名到文件
+            try:
+                with open(failed_file, "w", encoding="utf-8") as f:
+                    for name in products_to_process:
+                        f.write(f"{name}\n")
+                logger.warning(f"第 {iteration} 轮有 {len(failed_results)} 个品名解析失败，已保存至 {failed_file}。")
+            except Exception as e:
+                logger.error(f"保存失败品名到文件失败: {e}")
+            
+            # 轮次间稍微等待，避免立即触发限速
+            await asyncio.sleep(1)
+        else:
+            products_to_process = []
+            if os.path.exists(failed_file):
+                os.remove(failed_file)
+            logger.info("所有品名均已成功解析。")
+        
+        iteration += 1
 
     # 3. 保存结果
-    try:
-        res_df = pd.DataFrame(results)
-        cols = ["被解析品名", "品类", "功能类别", "置信度"]
-        if "error" in res_df.columns:
-            cols.append("error")
-            
-        res_df[cols].to_excel(output_file, index=False)
-        logger.info(f"处理完成，结果已保存至 {output_file}")
-    except Exception as e:
-        logger.error(f"保存结果失败: {e}")
+    if all_results:
+        try:
+            res_df = pd.DataFrame(all_results)
+            cols = ["被解析品名", "品类", "功能类别", "置信度"]
+            res_df[cols].to_excel(output_file, index=False)
+            logger.info(f"全部处理完成，共 {len(all_results)} 条结果，已保存至 {output_file}")
+        except Exception as e:
+            logger.error(f"保存最终结果失败: {e}")
+    else:
+        logger.warning("没有成功的结果可以保存。")
 
 if __name__ == "__main__":
     asyncio.run(main())
