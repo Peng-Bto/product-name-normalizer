@@ -19,7 +19,7 @@ SPARK_API_KEY = os.getenv("SPARK_API_KEY")
 SPARK_BASE_URL = os.getenv("SPARK_BASE_URL", "https://maas-api.cn-huabei-1.xf-yun.com/v2")
 SPARK_MODEL_DOMAIN = os.getenv("SPARK_MODEL_DOMAIN", "generalv3.5") 
 
-CONCURRENCY_LIMIT = 10
+CONCURRENCY_LIMIT = 5
 RETRY_COUNT = 3
 
 # 初始化客户端
