@@ -1,0 +1,19 @@
+# 环境变量及敏感信息
+.env
+
+# Python 虚拟环境
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 项目产出及日志
+process.log
+result.xlsx
+
+# 数据文件 (通常建议不上传原始数据)
+product.xlsx
+
+# 编辑器配置
+.vscode/
+.idea/
