@@ -11,6 +11,7 @@ __pycache__/
 process.log
 result.xlsx
 failed_products.txt
+*.log
 
 # 数据文件 (通常建议不上传原始数据)
 product.xlsx
