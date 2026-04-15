@@ -71,16 +71,21 @@ async def get_classification(product_name, semaphore):
         for attempt in range(RETRY_COUNT):
             try:
                 # 构造对话
+                messages = [
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT
+                        + "\n请务必只以纯 JSON 格式回复，不要包含任何 markdown 块标记或解释文字。",
+                    },
+                    {"role": "user", "content": f'输入品名 = "{product_name}"'},
+                ]
+
+                # 记录请求内容到独立日志
+                logger.bind(request=True).info(json.dumps(messages, ensure_ascii=False))
+
                 response = await client.chat.completions.create(
                     model=SPARK_MODEL_DOMAIN,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": SYSTEM_PROMPT
-                            + "\n请务必只以纯 JSON 格式回复，不要包含任何 markdown 块标记或解释文字。",
-                        },
-                        {"role": "user", "content": f'输入品名 = "{product_name}"'},
-                    ],
+                    messages=messages,
                     temperature=0.1,
                     response_format={"type": "json_object"},
                 )
