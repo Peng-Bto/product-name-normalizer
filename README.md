@@ -50,6 +50,33 @@
 uv run main.py
 ```
 
+### ☁️ 云服务器后台运行
+
+如果你在云服务器上运行，建议使用 `nohup` 后台执行：
+
+```bash
+nohup python main.py > output.log 2>&1 &
+```
+
+实时查看日志：
+
+```bash
+tail -f output.log
+```
+
+项目还会生成以下日志文件：
+
+- `process.log`
+- `model_request.log`
+
+可以同时查看：
+
+```bash
+tail -f process.log model_request.log
+```
+
+> 退出实时查看：按 `Ctrl+C`。
+
 ## 📂 项目结构
 
 - `main.py`: 核心异步并发处理逻辑。
