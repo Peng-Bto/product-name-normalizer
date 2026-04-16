@@ -11,6 +11,7 @@ from tqdm.asyncio import tqdm
 # 加载环境变量
 load_dotenv()
 
+
 # 日志分流逻辑
 def filter_process(record):
     """常规日志不记录带有 request 标记的内容"""
@@ -41,10 +42,8 @@ logger.add(
 
 # 配置
 SPARK_API_KEY = os.getenv("SPARK_API_KEY")
-SPARK_BASE_URL = os.getenv(
-    "SPARK_BASE_URL", "https://maas-api.cn-huabei-1.xf-yun.com/v2"
-)
-SPARK_MODEL_DOMAIN = os.getenv("SPARK_MODEL_DOMAIN", "generalv3.5")
+SPARK_BASE_URL = os.getenv("SPARK_BASE_URL")
+SPARK_MODEL_DOMAIN = os.getenv("SPARK_MODEL_DOMAIN")
 
 CONCURRENCY_LIMIT = 10
 RETRY_COUNT = 3
@@ -86,11 +85,15 @@ async def get_classification(product_name, semaphore):
                 response = await client.chat.completions.create(
                     model=SPARK_MODEL_DOMAIN,
                     messages=messages,
-                    temperature=0.1,
-                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                    # 推理模型使用此参数将导致推理失效
+                    # response_format={"type": "json_object"},
                 )
 
                 content = response.choices[0].message.content.strip()
+                full_content = response  # 用于日志记录完整响应内容
+                logger.bind(request=True).info(json.dumps(content, ensure_ascii=False))
+                logger.bind(request=True).info(full_content)
 
                 # 智能提取 JSON
                 json_text = ""
