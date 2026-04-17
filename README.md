@@ -1,94 +1,63 @@
-# 品名自动分类工具 (Product Name Normalizer)
+# Product Name Normalizer (大批量品名标准化工具)
 
-基于科大讯飞星火大模型（OpenAI 兼容接口）实现的自动化海关品名分类工具。支持高并发处理、自动去重、断点续传及完善的日志记录。
+本项目是一个基于大语言模型（LLM）的自动化品名解析与分类工具，专门针对数万级规模的商品品名进行标准化处理。它能够自动识别品名中的关键信息，并将其归类到指定的品类和功能类别中。
 
-## 🚀 功能特性
+## 核心功能
 
-- **高并发处理**：默认开启 7 路异步并发，显著提升大批量品名的解析效率。
-- **断点续传**：解析失败的品名会自动保存到 `failed_products.txt`，重启程序将优先处理上次未成功的任务。
-- **自动重试机制**：程序会自动循环重试失败品名，并在轮次间加入 1 秒延迟，直至所有品名解析成功。
-- **数据预处理**：自动读取 Excel 第一列品名，剔除重复项及首尾空格，节省 Token。
-- **智能解析**：强制启用 `json_object` 模式，确保模型返回稳定的 JSON 结构。
-- **全流程日志**：集成 `loguru`，实时记录处理进度、错误详情及 API 交互。
-- **环境管理**：使用 `uv` 进行现代化的 Python 依赖和环境管理。
+- **🚀 工业级异步并发**：采用 `asyncio` 异步框架与信号量（Semaphore）控制，支持高并发调用 LLM API，极速处理 5 万+ 规模的品名。
+- **💾 断点续传 (Checkpointing)**：自动记录处理进度。若任务中途因网络、服务器等原因中断，重启后会自动跳过已处理的品名，从断点处继续执行，节省 API 消耗。
+- **🔒 即时存盘 (Real-time Saving)**：**最高安全等级**。每成功解析一个品名，结果会立即以增量方式（JSON Lines）写入磁盘，并自动附带 `保存时间` 戳，确保即使程序意外崩溃，已调用的结果也绝不丢失，且方便进度追踪。
+- **🧠 智能 JSON 提取**：内置鲁棒的正则提取逻辑，能够从模型回复中精准剥离出 JSON 结构，有效应对模型输出中夹杂的 Markdown 标签或解释性文字。
+- **🔄 自动轮询重试**：针对处理失败（网络超时或逻辑错误）的品名，会自动进入下一轮重试队列，直至所有品名全部成功解析。
+- **📊 结果自动导出**：任务完成后，自动去重并汇总所有中间进度，一键生成标准化的 Excel 结果报表。
+- **📝 双重日志分流**：
+  - `process.log`: 记录程序运行状态、进度及错误信息。
+  - `model_request.log`: 完整记录每一次 API 的请求报文与原始响应，方便后期审计与质量分析。
 
-## 🛠️ 环境准备
+## 环境配置
 
-1. **安装 uv** (如果尚未安装):
-   ```powershell
-   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+1.  **安装依赖**：
+    ```bash
+    pip install pandas loguru openai python-dotenv tqdm openpyxl
+    ```
+2.  **配置环境变量**：
+    在根目录下创建 `.env` 文件，并填写您的 API 配置：
+    ```env
+    SPARK_API_KEY=您的APIKey:您的APISecret
+    SPARK_BASE_URL=https://spark-api-open.xf-yun.com/v1
+    SPARK_MODEL_DOMAIN=4.0Ultra
+    ```
 
-2. **获取 API 凭证**:
-   前往 [讯飞开放平台-星火大模型](https://console.xfyun.cn/services/bm2) 获取您的 `APIKey` 和 `APISecret`。
+## 使用说明
 
-## 📦 安装与配置
+1.  **准备输入文件**：
+    将待处理的 Excel 文件命名为 `product.xlsx` 放置在根目录下，程序默认读取**第一列**作为品名。
+2.  **配置 Prompt**：
+    在 `prompt.txt` 中编写您的分类逻辑与规则。
+3.  **运行任务**：
+    ```bash
+    # 直接运行
+    python main.py
+    
+    # 云服务器后台运行（推荐）
+    nohup python main.py > nohup.out 2>&1 &
+    ```
+4.  **查看进度**：
+    ```bash
+    # 查看进度条
+    tail -f nohup.out
+    
+    # 查看运行日志
+    tail -f process.log
+    ```
 
-1. **克隆项目**:
-   ```bash
-   git clone https://github.com/Peng-Bto/product-name-normalizer.git
-   cd product-name-normalizer
-   ```
+## 产出文件
 
-2. **配置环境变量**:
-   将 `.env.example` 重命名为 `.env`，并填入您的配置：
-   ```bash
-   # 注意：API_KEY 格式为 APIKey:APISecret
-   SPARK_API_KEY=您的APIKey:您的APISecret
-   SPARK_BASE_URL=https://maas-api.cn-huabei-1.xf-yun.com/v2
-   SPARK_MODEL_DOMAIN=generalv3.5
-   ```
+- `result_checkpoint.jsonl`: 运行过程中的即时增量备份文件（最重要）。
+- `result.xlsx`: 最终生成的完整分类结果。
+- `failed_products.txt`: 记录当前仍处于失败状态、待重试的品名。
 
-3. **准备数据**:
-   在项目根目录下放置 `product.xlsx`，确保第一列为您需要分类的原始品名。
+## 注意事项
 
-## 💻 运行使用
-
-使用 `uv` 一键安装依赖并启动程序：
-
-```powershell
-uv run main.py
-```
-
-### ☁️ 云服务器后台运行
-
-如果你在云服务器上运行，建议使用 `nohup` 后台执行：
-
-```bash
-nohup python main.py > output.log 2>&1 &
-```
-
-实时查看日志：
-
-```bash
-tail -f output.log
-```
-
-项目还会生成以下日志文件：
-
-- `process.log`
-- `model_request.log`
-
-可以同时查看：
-
-```bash
-tail -f process.log model_request.log
-```
-
-> 退出实时查看：按 `Ctrl+C`。
-
-## 📂 项目结构
-
-- `main.py`: 核心异步并发处理逻辑。
-- `prompt.txt`: 包含海关品名分类标准的系统提示词。
-- `failed_products.txt`: 自动生成的失败/待处理品名清单（支持断点续传）。
-- `product.xlsx`: 输入数据文件（需自备）。
-- `result.xlsx`: 自动生成的分类结果文件。
-- `process.log`: 运行过程中的详细日志。
-- `test_connection.py`: 简易连通性与兼容性测试工具。
-
-## 📝 注意事项
-
-- **分类标准**：如需调整分类类别，请直接修改 `prompt.txt`。
-- **并发限制**：如需调整并发数，请修改 `main.py` 中的 `CONCURRENCY_LIMIT` 常量。
-- **安全提醒**：请勿将包含真实 API Key 的 `.env` 文件提交到代码仓库（已默认配置 `.gitignore`）。
+- **并发控制**：默认 `CONCURRENCY_LIMIT = 10`。如需提速且 API 余额充足，可调大此参数。
+- **安全保障**：由于具备即时存盘功能，您可以随时通过杀掉进程的方式暂停任务，下次运行 `python main.py` 即可无缝接续。

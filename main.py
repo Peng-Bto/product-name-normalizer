@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import pandas as pd
+from datetime import datetime
 from loguru import logger
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -144,64 +145,82 @@ async def main():
     input_file = "product.xlsx"
     output_file = "result.xlsx"
     failed_file = "failed_products.txt"
-
-    all_results = []
+    checkpoint_file = "result_checkpoint.jsonl"
 
     # 1. 初始读取数据
+    if not os.path.exists(input_file):
+        logger.error(f"找不到输入文件 {input_file}")
+        return
+    try:
+        df = pd.read_excel(input_file)
+        original_col_name = df.columns[0]
+        all_products = (
+            df[original_col_name].dropna().astype(str).str.strip().unique().tolist()
+        )
+        logger.info(f"从 {input_file} 原始读取到 {len(all_products)} 个唯一品名。")
+    except Exception as e:
+        logger.error(f"读取 Excel 失败: {e}")
+        return
+
+    # 2. 读取断点续传记录（已经成功的品名）
+    processed_products = set()
+    if os.path.exists(checkpoint_file):
+        try:
+            with open(checkpoint_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        processed_products.add(data.get("被解析品名"))
+            logger.info(f"检测到断点记录，已成功处理过 {len(processed_products)} 个品名。")
+        except Exception as e:
+            logger.error(f"读取断点记录失败: {e}")
+
+    # 3. 筛选出还未处理的品名
     if os.path.exists(failed_file):
         try:
             with open(failed_file, "r", encoding="utf-8") as f:
-                products_to_process = [line.strip() for line in f if line.strip()]
+                failed_products = [line.strip() for line in f if line.strip()]
+            products_to_process = [
+                p for p in failed_products if p not in processed_products
+            ]
             logger.info(
-                f"从 {failed_file} 读取到 {len(products_to_process)} 个失败品名，准备重试。"
+                f"从 {failed_file} 恢复，剔除已成功项后，剩余 {len(products_to_process)} 个待处理品名。"
             )
         except Exception as e:
             logger.error(f"读取 {failed_file} 失败: {e}")
             return
     else:
-        if not os.path.exists(input_file):
-            logger.error(f"找不到输入文件 {input_file}")
-            return
-        try:
-            df = pd.read_excel(input_file)
-            original_col_name = df.columns[0]
-            products_to_process = (
-                df[original_col_name].dropna().astype(str).str.strip().unique().tolist()
-            )
-            logger.info(
-                f"从 {input_file} 读取到 {len(products_to_process)} 个唯一品名。"
-            )
-        except Exception as e:
-            logger.error(f"读取 Excel 失败: {e}")
-            return
+        products_to_process = [p for p in all_products if p not in processed_products]
+        logger.info(f"去重后，本次实际待处理品名数量: {len(products_to_process)}")
 
     iteration = 1
     while products_to_process:
-        logger.info(
-            f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}"
-        )
+        logger.info(f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}")
 
         semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
         tasks = [get_classification(name, semaphore) for name in products_to_process]
 
-        current_round_results = []
+        failed_results = []
+        # ★★★ 关键修改：在循环内部即时保存 ★★★
         for coro in tqdm(
             asyncio.as_completed(tasks),
             total=len(tasks),
             desc=f"第 {iteration} 轮分类进度",
         ):
             result = await coro
-            current_round_results.append(result)
-
-        # 筛选成功和失败
-        success_results = [
-            r for r in current_round_results if r.get("品类") != "处理失败"
-        ]
-        failed_results = [
-            r for r in current_round_results if r.get("品类") == "处理失败"
-        ]
-
-        all_results.extend(success_results)
+            
+            if result.get("品类") != "处理失败":
+                # 添加保存时间
+                result["保存时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 只要成功一个，立刻追加保存一行
+                try:
+                    with open(checkpoint_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                except Exception as e:
+                    logger.error(f"即时保存结果失败: {e}")
+            else:
+                # 失败的存入临时列表用于下一轮重试
+                failed_results.append(result)
 
         if failed_results:
             products_to_process = [r["被解析品名"] for r in failed_results]
@@ -222,18 +241,30 @@ async def main():
             products_to_process = []
             if os.path.exists(failed_file):
                 os.remove(failed_file)
-            logger.info("所有品名均已成功解析。")
+            logger.info("本轮所有品名均已成功解析。")
 
         iteration += 1
 
-    # 3. 保存结果
-    if all_results:
+    # 4. 保存结果 (从 checkpoint 文件读取全部结果)
+    final_results = []
+    if os.path.exists(checkpoint_file):
         try:
-            res_df = pd.DataFrame(all_results)
+            with open(checkpoint_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        final_results.append(json.loads(line))
+        except Exception as e:
+            logger.error(f"读取最终断点文件失败: {e}")
+
+    if final_results:
+        try:
+            res_df = pd.DataFrame(final_results)
+            # 即使有重复写入也进行去重
+            res_df = res_df.drop_duplicates(subset=["被解析品名"], keep="last")
             cols = ["被解析品名", "品类", "功能类别", "置信度"]
             res_df[cols].to_excel(output_file, index=False)
             logger.info(
-                f"全部处理完成，共 {len(all_results)} 条结果，已保存至 {output_file}"
+                f"全部处理完成，共 {len(res_df)} 条结果，已保存至 {output_file}"
             )
         except Exception as e:
             logger.error(f"保存最终结果失败: {e}")
