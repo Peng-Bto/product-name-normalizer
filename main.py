@@ -48,6 +48,7 @@ SPARK_MODEL_DOMAIN = os.getenv("SPARK_MODEL_DOMAIN")
 
 CONCURRENCY_LIMIT = 10
 RETRY_COUNT = 3
+MAX_ITERATIONS = 3  # 最大迭代轮次，防止无限重试
 
 # 初始化客户端
 client = AsyncOpenAI(api_key=SPARK_API_KEY, base_url=SPARK_BASE_URL)
@@ -219,6 +220,16 @@ async def main():
 
     iteration = 1
     while products_to_process:
+        # 超过最大迭代轮次，停止重试
+        if iteration > MAX_ITERATIONS:
+            logger.warning(
+                f"已达到最大迭代轮次 ({MAX_ITERATIONS})，停止重试。剩余 {len(products_to_process)} 个品名解析失败。"
+            )
+            # 清理失败文件标记为已放弃
+            if os.path.exists(failed_file):
+                os.remove(failed_file)
+            break
+
         logger.info(
             f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}"
         )
