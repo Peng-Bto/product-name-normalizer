@@ -154,10 +154,32 @@ async def main():
     try:
         df = pd.read_excel(input_file)
         original_col_name = df.columns[0]
-        all_products = (
-            df[original_col_name].dropna().astype(str).str.strip().unique().tolist()
+
+        # 读取所有原始品名（去除空值，保留顺序和重复项，不去重）
+        all_raw_names = df[original_col_name].dropna().astype(str).tolist()
+
+        # 定义一个函数来处理品名：去除空格和换行符
+        def clean_product_name(name):
+            # 去除前后空格，然后去除所有换行符（\n、\r）
+            return name.strip().replace('\n', '').replace('\r', '').replace('\r\n', '')
+
+        # 生成对照文档：每一行原始数据都对应一条记录（包括重复项）
+        mapping_data = []
+        for orig in all_raw_names:
+            processed = clean_product_name(orig)
+            mapping_data.append({"原始品名": orig, "处理后品名": processed})
+
+        mapping_df = pd.DataFrame(mapping_data)
+        mapping_df.to_excel("name_mapping.xlsx", index=False)
+        logger.info(
+            f"已生成对照文档 name_mapping.xlsx，包含 {len(mapping_df)} 条记录。"
         )
-        logger.info(f"从 {input_file} 原始读取到 {len(all_products)} 个唯一品名。")
+
+        # 去重后的品名列表用于后续 API 调用
+        all_products = list(set(clean_product_name(p) for p in all_raw_names))
+        logger.info(
+            f"从 {input_file} 原始读取到 {len(all_raw_names)} 条，去重后 {len(all_products)} 个唯一品名。"
+        )
     except Exception as e:
         logger.error(f"读取 Excel 失败: {e}")
         return
@@ -171,7 +193,9 @@ async def main():
                     if line.strip():
                         data = json.loads(line)
                         processed_products.add(data.get("被解析品名"))
-            logger.info(f"检测到断点记录，已成功处理过 {len(processed_products)} 个品名。")
+            logger.info(
+                f"检测到断点记录，已成功处理过 {len(processed_products)} 个品名。"
+            )
         except Exception as e:
             logger.error(f"读取断点记录失败: {e}")
 
@@ -179,7 +203,7 @@ async def main():
     if os.path.exists(failed_file):
         try:
             with open(failed_file, "r", encoding="utf-8") as f:
-                failed_products = [line.strip() for line in f if line.strip()]
+                failed_products = [clean_product_name(line) for line in f if line.strip()]
             products_to_process = [
                 p for p in failed_products if p not in processed_products
             ]
@@ -195,7 +219,9 @@ async def main():
 
     iteration = 1
     while products_to_process:
-        logger.info(f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}")
+        logger.info(
+            f"第 {iteration} 轮处理，待处理品名数量: {len(products_to_process)}"
+        )
 
         semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
         tasks = [get_classification(name, semaphore) for name in products_to_process]
@@ -208,7 +234,7 @@ async def main():
             desc=f"第 {iteration} 轮分类进度",
         ):
             result = await coro
-            
+
             if result.get("品类") != "处理失败":
                 # 添加保存时间
                 result["保存时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
