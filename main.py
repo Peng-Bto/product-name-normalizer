@@ -159,10 +159,11 @@ async def main():
         # 读取所有原始品名（去除空值，保留顺序和重复项，不去重）
         all_raw_names = df[original_col_name].dropna().astype(str).tolist()
 
-        # 定义一个函数来处理品名：去除空格和换行符
+        # 定义一个函数来处理品名：去除空格和换行符等符号
         def clean_product_name(name):
             # 去除前后空格，然后去除所有换行符（\n、\r）
-            return name.strip().replace('\n', '').replace('\r', '').replace('\r\n', '')
+            # return name.strip().replace('\n', '').replace('\r', '').replace('\r\n', '').replace('\"', '')
+            return re.sub(r"\s+|\\n", "", name)
 
         # 生成对照文档：每一行原始数据都对应一条记录（包括重复项）
         mapping_data = []
